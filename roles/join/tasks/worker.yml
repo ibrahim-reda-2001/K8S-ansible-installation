@@ -1,4 +1,15 @@
 ---
+- name: Install Kubernetes node prerequisites
+  become: yes
+  ansible.builtin.apt:
+    name:
+      - conntrack
+      - socat
+      - ebtables
+      - ipset
+    state: present
+
+
 - name: Check if node is already joined
   stat:
     path: /etc/kubernetes/kubelet.conf
@@ -9,9 +20,8 @@
     target_master: "{{ (kube_master_host is defined) | ternary(kube_master_host, groups[kube_master_group][0]) }}"
 
 - name: Join worker node to cluster
-  command: "sudo {{ hostvars[target_master]['kubeadm_join_command'] }}"
-  when: >
-    not kubelet_conf.stat.exists or
-    kubelet_conf.stat.size == 0
+  become: yes
+  ansible.builtin.command: "{{ hostvars[target_master]['kubeadm_join_command'] }}"
+  when: not kubelet_conf.stat.exists
   args:
-    creates: /etc/kubernetes/kubelet.conf  # Ensures idempotence
+    creates: /etc/kubernetes/kubelet.conf

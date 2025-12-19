@@ -1,8 +1,21 @@
 ---
+- name: Install Kubernetes node prerequisites
+  become: yes
+  apt:
+    name:
+      - conntrack
+      - socat
+      - ebtables
+      - ipset
+    state: present
+
 - name: Check if Kubernetes is already initialized
   stat:
     path: /etc/kubernetes/admin.conf
   register: kube_admin_conf
+- name: show the stat
+  debug:
+    var: kube_admin_conf
 
 - name: Check if Kubernetes is already initialized
   stat:

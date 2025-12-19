@@ -1,12 +1,214 @@
 ---
-- name: Include Docker setup tasks
-  include_tasks: docker.yml
+- name: Update apt cache
+  apt:
+    update_cache: yes
 
-- name: Include containerd configuration tasks
-  include_tasks: containerd.yml
+- name: Install prerequisites
+  apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gpg
+      - gnupg
+      - python3-urllib3
+      - python3-requests
+    update_cache: yes
+    state: present
 
-- name: Include system configuration tasks
-  include_tasks: system.yml
+- name: Create keyrings directory
+  become: yes
+  file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
 
-- name: Include Kubernetes installation tasks
-  include_tasks: k8s.yml
+- name: Download Docker GPG key (ASCII, no dearmor)
+  become: yes
+  shell: |
+    sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+    sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+- name: Add Docker repository using .sources file
+  become: yes
+  copy:
+    dest: /etc/apt/sources.list.d/docker.sources
+    content: |
+      Types: deb
+      URIs: https://download.docker.com/linux/ubuntu
+      Suites: jammy
+      Components: stable
+      Signed-By: /etc/apt/keyrings/docker.asc
+
+- name: Update apt cache
+  become: yes
+  apt:
+    update_cache: yes
+
+- name: Install Docker components
+  become: yes
+  apt:
+    name:
+      - containerd.io
+      - docker-ce
+      - docker-ce-cli
+    state: present
+
+- name: Reload systemd
+  systemd:
+    daemon_reload: yes
+
+- name: Enable and start Docker services
+  service:
+    name: "{{ item }}"
+    state: started
+    enabled: yes
+  loop:
+    - docker
+    - containerd
+
+- name: Add user to docker group
+  user:
+    name: ubuntu
+    groups: docker
+    append: yes
+
+- name: Download CNI plugins
+  become: yes
+  shell: |
+    curl -L https://github.com/containernetworking/plugins/releases/download/v1.4.0/cni-plugins-linux-amd64-v1.4.0.tgz \
+    -o /tmp/cni-plugins.tgz
+
+- name: Create CNI bin directory
+  file:
+    path: /opt/cni/bin
+    state: directory
+
+- name: Extract CNI plugins
+  unarchive:
+    src: /tmp/cni-plugins.tgz
+    dest: /opt/cni/bin
+    remote_src: yes
+
+
+- name: Ensure containerd configuration directory exists
+  file:
+    path: /etc/containerd
+    state: directory
+
+- name: Generate containerd default config if not exists
+  become: yes
+  shell: |
+      mkdir -p /etc/containerd
+      containerd config default > /etc/containerd/config.toml
+    
+
+- name: Set SystemdCgroup = true in containerd config
+  shell: |
+    sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+    systemctl daemon-reload
+    systemctl restart containerd
+  become: yes
+  notify: Restart containerd
+- name: Ensure containerd is running
+  service:
+    name: containerd
+    state: started
+    enabled: yes
+- name: Disable swap in fstab
+  replace:
+    path: /etc/fstab
+    regexp: '^(.*swap.*)$'
+    replace: '# \1'
+
+- name: Disable active swap
+  command: swapoff -a
+
+- name: Install SELinux utilities
+  apt:
+    name: selinux-utils
+    state: present
+
+
+
+- name: Enable IP forwarding
+  ansible.posix.sysctl:
+    name: net.ipv4.ip_forward
+    value: '1'
+    state: present
+    reload: yes
+
+- name: Make IP forwarding persistent
+  lineinfile:
+    path: /etc/sysctl.conf
+    line: 'net.ipv4.ip_forward = 1'
+    state: present
+
+- name: Set hostname
+  hostname:
+    name: "{{ node_hostname }}"
+
+- name: Check if Kubernetes repo key exists
+  ansible.builtin.stat:
+    path: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  register: k8s_key
+  
+
+- name: Download Kubernetes GPG key
+  become: yes
+  shell: |
+    curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  when: not k8s_key.stat.exists
+
+- name: Add Kubernetes repository
+  become: yes
+  shell: |
+      echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+  
+
+- name: Update apt cache
+  become: yes
+  apt:
+    update_cache: yes
+    
+- name: Install Kubernetes components
+  apt:
+    name:
+      - kubelet
+      - kubeadm
+      - kubectl
+    state: present
+
+- name: Hold Kubernetes packages
+  command: apt-mark hold kubelet kubeadm kubectl
+
+- name: Load kernel modules
+  modprobe:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - overlay
+    - br_netfilter
+
+- name: Configure sysctl parameters
+  copy:
+    dest: /etc/sysctl.d/kubernetes.conf
+    content: |
+      net.bridge.bridge-nf-call-ip6tables = 1
+      net.bridge.bridge-nf-call-iptables = 1
+      net.ipv4.ip_forward = 1
+
+- name: Configure kernel modules
+  copy:
+    dest: /etc/modules-load.d/k8s.conf
+    content: |
+      overlay
+      br_netfilter
+
+- name: Apply sysctl settings
+  command: sysctl --system
+
+- name: Enable kubelet service
+  service:
+    name: kubelet
+    enabled: yes

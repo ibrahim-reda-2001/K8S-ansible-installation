@@ -10,34 +10,40 @@
       - ca-certificates
       - curl
       - gpg
+      - gnupg
+      - python3-urllib3
+      - python3-requests
+    update_cache: yes
     state: present
 
-- name: Create Docker keyring directory
+- name: Create keyrings directory
+  become: yes
   file:
     path: /etc/apt/keyrings
     state: directory
     mode: '0755'
 
-- name: Download Docker GPG key
-  get_url:
-    url: https://download.docker.com/linux/ubuntu/gpg
-    dest: /etc/apt/keyrings/docker.asc
-    mode: '0644'
-
-- name: Add Docker repository
+- name: Download Docker GPG key (ASCII, no dearmor)
   become: yes
-  ansible.builtin.apt_repository:
-    repo: >
-      deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc]
-      https://download.docker.com/linux/ubuntu jammy stable
-    filename: docker
-    state: present
+  shell: |
+    sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+    sudo chmod a+r /etc/apt/keyrings/docker.asc
 
-- name: Update apt cache after adding Docker repo
+- name: Add Docker repository using .sources file
   become: yes
-  ansible.builtin.apt:
+  copy:
+    dest: /etc/apt/sources.list.d/docker.sources
+    content: |
+      Types: deb
+      URIs: https://download.docker.com/linux/ubuntu
+      Suites: jammy
+      Components: stable
+      Signed-By: /etc/apt/keyrings/docker.asc
+
+- name: Update apt cache
+  become: yes
+  apt:
     update_cache: yes
-
 
 - name: Install Docker components
   become: yes
@@ -68,9 +74,10 @@
     append: yes
 
 - name: Download CNI plugins
-  get_url:
-    url: https://github.com/containernetworking/plugins/releases/download/v1.4.0/cni-plugins-linux-amd64-v1.4.0.tgz
-    dest: /tmp/cni-plugins.tgz
+  become: yes
+  shell: |
+    curl -L https://github.com/containernetworking/plugins/releases/download/v1.4.0/cni-plugins-linux-amd64-v1.4.0.tgz \
+    -o /tmp/cni-plugins.tgz
 
 - name: Create CNI bin directory
   file:
@@ -82,3 +89,30 @@
     src: /tmp/cni-plugins.tgz
     dest: /opt/cni/bin
     remote_src: yes
+
+
+- name: Ensure containerd configuration directory exists
+  file:
+    path: /etc/containerd
+    state: directory
+
+- name: Generate containerd default config if not exists
+  become: yes
+  shell: |
+    
+      mkdir -p /etc/containerd
+      containerd config default > /etc/containerd/config.toml
+    
+
+- name: Set SystemdCgroup = true in containerd config
+  shell: |
+    sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+    systemctl daemon-reload
+    systemctl restart containerd
+  become: yes
+  notify: Restart containerd
+- name: Ensure containerd is running
+  service:
+    name: containerd
+    state: started
+    enabled: yes
