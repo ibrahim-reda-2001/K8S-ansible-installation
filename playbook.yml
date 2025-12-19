@@ -5,9 +5,9 @@
     kube_join_role: master
 
   roles:
-    # - k8s-node-setup
-    # - kubeadm
-    # - cni
+    - k8s-node-setup
+    - kubeadm
+    - cni
     - join
 
 - name: this is for workers kubernetes
@@ -18,6 +18,6 @@
     node_hostname: "worker{{ ansible_play_hosts.index(inventory_hostname) + 1 }}"
     kube_join_role: worker
   roles:
-    # - k8s-node-setup
+    - k8s-node-setup
     - join
 
