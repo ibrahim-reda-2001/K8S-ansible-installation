@@ -1,3 +1,23 @@
+### Overview ###
+
+This guide explains how to install and configure a Kubernetes cluster using Ansible.
+
+Ansible is used as an automation tool to provision and configure multiple servers (one master node and multiple worker nodes) in a consistent, repeatable, and idempotent way.
+
+Using this setup, Ansible will:
+
+Connect to all Kubernetes nodes using SSH
+
+Prepare the operating system on each node
+
+Install container runtime and Kubernetes components
+
+Initialize the Kubernetes control plane
+
+Join worker nodes to the cluster automatically
+
+This approach eliminates manual configuration and ensures all nodes are configured in the same way, which is especially useful for cloud environments such as AWS.
+
 ## 1-install ansible ##
 
 ``` 
