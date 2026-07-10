@@ -97,6 +97,6 @@ sudo etcdctl endpoint status --cluster -w table \
 
 ## Notes ##
 
-- Shared settings (pod CIDR, etcd version/ports, load balancer endpoint) live in `group_vars/all.yml`.
+- Shared settings live in `group_vars/all.yml` — edit `k8s_version` (apt repo minor version for kubelet/kubeadm/kubectl), `calico_version`, `etcd_version`, `pod_network_cidr` there.
 - The API server endpoint used by all kubeconfigs is the haproxy node (`<lb-ip>:6443`), so any single master can fail without losing API access.
 - etcd data lives in `/var/lib/etcd`, TLS material in `/etc/etcd/pki`. kubeadm's external-etcd certs are placed at `/etc/kubernetes/pki/etcd/ca.crt` and `/etc/kubernetes/pki/apiserver-etcd-client.{crt,key}` on every master.
