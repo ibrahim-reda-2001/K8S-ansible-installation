@@ -17,24 +17,29 @@
     - "{{ etcd_data_dir }}"
     - "{{ etcd_pki_dir }}"
 
-- name: Check if etcd binary is already installed
-  stat:
-    path: "{{ etcd_install_dir }}/etcd"
-  register: etcd_binary
+- name: Check installed etcd version
+  command: "{{ etcd_install_dir }}/etcd --version"
+  register: etcd_installed
+  failed_when: false
+  changed_when: false
+
+- name: Decide whether etcd needs install or upgrade
+  set_fact:
+    etcd_needs_install: "{{ etcd_installed.rc != 0 or ('etcd Version: ' + (etcd_version | regex_replace('^v', ''))) not in etcd_installed.stdout }}"
 
 - name: Download etcd release tarball
   get_url:
     url: "{{ etcd_download_url }}"
     dest: /tmp/etcd-{{ etcd_version }}.tar.gz
     mode: '0644'
-  when: not etcd_binary.stat.exists
+  when: etcd_needs_install
 
 - name: Extract etcd tarball
   unarchive:
     src: /tmp/etcd-{{ etcd_version }}.tar.gz
     dest: /tmp
     remote_src: yes
-  when: not etcd_binary.stat.exists
+  when: etcd_needs_install
 
 - name: Install etcd and etcdctl binaries
   copy:
@@ -45,4 +50,5 @@
   loop:
     - etcd
     - etcdctl
-  when: not etcd_binary.stat.exists
+  when: etcd_needs_install
+  notify: Restart etcd
