@@ -47,3 +47,24 @@
     group: "{{ kube_config_user }}"
     mode: '0600'
     remote_src: yes
+
+# ---------- Validation ----------
+- name: Validate - this control-plane node reports Ready
+  become: yes
+  command: kubectl --kubeconfig /etc/kubernetes/admin.conf wait node/{{ inventory_hostname }} --for=condition=Ready --timeout=300s
+  changed_when: false
+
+- name: Validate - this node runs its own API server pod
+  become: yes
+  command: kubectl --kubeconfig /etc/kubernetes/admin.conf -n kube-system get pod kube-apiserver-{{ inventory_hostname }} --no-headers
+  register: apiserver_pod
+  retries: 10
+  delay: 15
+  until: apiserver_pod.rc == 0 and 'Running' in apiserver_pod.stdout
+  changed_when: false
+
+- name: Validate - no etcd static pod on this node (external etcd)
+  stat:
+    path: /etc/kubernetes/manifests/etcd.yaml
+  register: etcd_manifest
+  failed_when: etcd_manifest.stat.exists

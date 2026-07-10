@@ -29,3 +29,32 @@
   delay: 10
   until: etcd_health.rc == 0
   changed_when: false
+
+# ---------- Validation ----------
+- name: Validate - etcd service is active and enabled
+  command: systemctl is-enabled etcd
+  changed_when: false
+
+- name: Validate - etcd runs as a systemd service, not a pod
+  stat:
+    path: /etc/kubernetes/manifests/etcd.yaml
+  register: etcd_static_pod
+  failed_when: etcd_static_pod.stat.exists
+
+- name: Validate - etcd cluster has all expected members
+  command: >
+    {{ etcd_install_dir }}/etcdctl member list
+    --endpoints=https://127.0.0.1:{{ etcd_client_port }}
+    --cacert={{ etcd_pki_dir }}/ca.crt
+    --cert={{ etcd_pki_dir }}/server.crt
+    --key={{ etcd_pki_dir }}/server.key
+  run_once: true
+  register: etcd_members
+  changed_when: false
+  failed_when: etcd_members.stdout_lines | length != groups['masters'] | length
+
+- name: Validate - etcd version matches the requested version
+  command: "{{ etcd_install_dir }}/etcd --version"
+  register: etcd_version_check
+  changed_when: false
+  failed_when: "('etcd Version: ' + (etcd_version | regex_replace('^v', ''))) not in etcd_version_check.stdout"

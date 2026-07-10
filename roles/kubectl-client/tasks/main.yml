@@ -1,0 +1,61 @@
+---
+- name: Resolve latest kubectl patch release for v{{ k8s_version }}
+  uri:
+    url: "https://dl.k8s.io/release/stable-{{ k8s_version }}.txt"
+    return_content: yes
+  register: kubectl_stable
+
+- name: Download kubectl binary
+  get_url:
+    url: "https://dl.k8s.io/release/{{ kubectl_stable.content | trim }}/bin/linux/amd64/kubectl"
+    dest: /usr/local/bin/kubectl
+    mode: '0755'
+
+- name: Install bash-completion package
+  apt:
+    name: bash-completion
+    state: present
+
+- name: Enable kubectl bash completion for all users
+  shell: kubectl completion bash > /etc/bash_completion.d/kubectl
+  args:
+    creates: /etc/bash_completion.d/kubectl
+
+- name: Read admin kubeconfig from first master
+  slurp:
+    path: /etc/kubernetes/admin.conf
+  delegate_to: "{{ groups['masters'][0] }}"
+  register: admin_kubeconfig
+
+- name: Ensure .kube directory exists for {{ kube_config_user }}
+  file:
+    path: "{{ kube_user_home }}/.kube"
+    state: directory
+    owner: "{{ kube_config_user }}"
+    group: "{{ kube_config_user }}"
+    mode: '0750'
+
+- name: Install kubeconfig for {{ kube_config_user }}
+  copy:
+    content: "{{ admin_kubeconfig.content | b64decode }}"
+    dest: "{{ kube_user_home }}/.kube/config"
+    owner: "{{ kube_config_user }}"
+    group: "{{ kube_config_user }}"
+    mode: '0600'
+
+# End-to-end validation: kubectl on the LB goes through haproxy to the API servers
+- name: Validate - kubectl reaches the API through the load balancer
+  command: kubectl --kubeconfig {{ kube_user_home }}/.kube/config get nodes --no-headers
+  register: cluster_nodes
+  retries: 5
+  delay: 10
+  until: cluster_nodes.rc == 0
+  changed_when: false
+
+- name: Validate - all expected nodes are registered and Ready
+  assert:
+    that:
+      - cluster_nodes.stdout_lines | length == (groups['masters'] | length) + (groups['workers'] | length)
+      - cluster_nodes.stdout_lines | select('search', ' Ready') | list | length == cluster_nodes.stdout_lines | length
+    fail_msg: "Cluster validation failed. Nodes reported: {{ cluster_nodes.stdout_lines }}"
+    success_msg: "All {{ cluster_nodes.stdout_lines | length }} nodes are Ready through the LB endpoint"

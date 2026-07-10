@@ -10,6 +10,7 @@
     src: haproxy.cfg.j2
     dest: /etc/haproxy/haproxy.cfg
     mode: '0644'
+    validate: haproxy -c -f %s
   notify: Restart haproxy
 
 - name: Enable and start haproxy
@@ -17,3 +18,17 @@
     name: haproxy
     state: started
     enabled: yes
+
+- name: Flush handlers so haproxy picks up config changes before validation
+  meta: flush_handlers
+
+# ---------- Validation ----------
+- name: Validate - haproxy is active
+  command: systemctl is-active haproxy
+  changed_when: false
+
+- name: Validate - haproxy is listening on port {{ apiserver_lb_port }}
+  wait_for:
+    host: 127.0.0.1
+    port: "{{ apiserver_lb_port }}"
+    timeout: 30

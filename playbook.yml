@@ -10,6 +10,10 @@
 - name: Configure haproxy load balancer for kube-apiserver
   hosts: loadbalancer
   become: true
+  pre_tasks:
+    - name: Set hostname
+      hostname:
+        name: "{{ inventory_hostname }}"
   roles:
     - haproxy
 
@@ -45,3 +49,9 @@
     kube_join_role: worker
   roles:
     - join
+
+- name: Install kubectl on load balancer and validate cluster end-to-end
+  hosts: loadbalancer
+  become: true
+  roles:
+    - kubectl-client

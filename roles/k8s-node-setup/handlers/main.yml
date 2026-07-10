@@ -3,3 +3,6 @@
   service:
     name: containerd
     state: restarted
+
+- name: Apply sysctl settings
+  command: sysctl --system

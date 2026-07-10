@@ -48,3 +48,25 @@
     mode: '0600'
     remote_src: yes
   become: yes
+
+# ---------- Validation ----------
+# admin.conf points at the load balancer endpoint, so this also proves the LB path works
+- name: Validate - API server answers /readyz through the load balancer
+  command: kubectl --kubeconfig /etc/kubernetes/admin.conf get --raw /readyz
+  register: api_ready
+  retries: 30
+  delay: 10
+  until: api_ready.rc == 0 and api_ready.stdout == 'ok'
+  changed_when: false
+
+- name: Validate - this node is registered as control-plane
+  command: kubectl --kubeconfig /etc/kubernetes/admin.conf get node {{ inventory_hostname }} --no-headers
+  register: node_check
+  changed_when: false
+  failed_when: "'control-plane' not in node_check.stdout"
+
+- name: Validate - cluster is using external etcd (no etcd static pod)
+  stat:
+    path: /etc/kubernetes/manifests/etcd.yaml
+  register: etcd_manifest
+  failed_when: etcd_manifest.stat.exists

@@ -13,3 +13,18 @@
     kubectl apply -f /home/ubuntu/calico-{{ calico_version }}.yaml
   environment:
     KUBECONFIG: /home/ubuntu/.kube/config
+  register: calico_apply
+  changed_when: "'created' in calico_apply.stdout or 'configured' in calico_apply.stdout"
+
+# ---------- Validation ----------
+- name: Validate - calico-node daemonset is rolled out
+  command: kubectl --kubeconfig /etc/kubernetes/admin.conf -n kube-system rollout status daemonset/calico-node --timeout=300s
+  changed_when: false
+
+- name: Validate - CoreDNS is available (proves pod networking works)
+  command: kubectl --kubeconfig /etc/kubernetes/admin.conf -n kube-system wait deployment/coredns --for=condition=Available --timeout=300s
+  changed_when: false
+
+- name: Validate - this node reports Ready
+  command: kubectl --kubeconfig /etc/kubernetes/admin.conf wait node/{{ inventory_hostname }} --for=condition=Ready --timeout=300s
+  changed_when: false

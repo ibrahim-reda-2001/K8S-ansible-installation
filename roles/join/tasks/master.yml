@@ -15,3 +15,12 @@
   set_fact:
     kubeadm_join_command: "{{ join_command.stdout }}"
     kubeadm_certificate_key: "{{ upload_certs.stdout_lines | last }}"
+
+# ---------- Validation ----------
+- name: Validate - join command and certificate key look correct
+  assert:
+    that:
+      - kubeadm_join_command is search('kubeadm join')
+      - kubeadm_join_command is search('--discovery-token-ca-cert-hash')
+      - kubeadm_certificate_key | length == 64
+    fail_msg: "Generated join credentials are malformed"
