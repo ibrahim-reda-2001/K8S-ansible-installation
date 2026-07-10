@@ -1,0 +1,9 @@
+---
+etcd_version: "v3.5.15"
+etcd_download_url: "https://github.com/etcd-io/etcd/releases/download/{{ etcd_version }}/etcd-{{ etcd_version }}-linux-amd64.tar.gz"
+etcd_install_dir: /usr/local/bin
+etcd_data_dir: /var/lib/etcd
+etcd_pki_dir: /etc/etcd/pki
+etcd_client_port: 2379
+etcd_peer_port: 2380
+etcd_first_node: "{{ groups['masters'][0] }}"

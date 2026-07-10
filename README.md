@@ -1,88 +1,102 @@
 ### Overview ###
 
-This guide explains how to install and configure a Kubernetes cluster using Ansible.
+This guide explains how to install and configure a **highly available (HA) Kubernetes cluster** using Ansible, following the [kubeadm HA topology](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/high-availability/) with an **external etcd cluster**.
 
-Ansible is used as an automation tool to provision and configure multiple servers (one master node and multiple worker nodes) in a consistent, repeatable, and idempotent way.
+Topology:
+
+- **3 control-plane (master) nodes** — kube-apiserver, controller-manager, scheduler
+- **etcd runs as a systemd service** on the 3 master nodes (NOT as static pods) — kubeadm is configured with `etcd.external`
+- **1 haproxy load balancer node** — provides the stable `controlPlaneEndpoint` (TCP :6443) in front of the 3 API servers
+- **3 worker nodes**
 
 Using this setup, Ansible will:
 
-Connect to all Kubernetes nodes using SSH
+1. Prepare the OS, container runtime (containerd) and Kubernetes packages on all masters and workers
+2. Install and configure haproxy on the load balancer node
+3. Generate a dedicated etcd CA + TLS certificates (server/peer per node + `apiserver-etcd-client`) and deploy etcd as a **systemd service** cluster on the 3 masters
+4. Run `kubeadm init` on the first master with a config file pointing at the external etcd endpoints and the load balancer endpoint
+5. Join the remaining 2 masters with `--control-plane --certificate-key`
+6. Join the worker nodes
+7. Deploy Calico CNI
 
-Prepare the operating system on each node
+## Requirements ##
 
-Install container runtime and Kubernetes components
+- Ubuntu hosts, SSH access with the user configured in `ansible.cfg` (default `ubuntu`)
+- The `community.crypto` collection on the Ansible control node (used for etcd TLS certs):
 
-Initialize the Kubernetes control plane
+```
+ansible-galaxy collection install community.crypto
+```
 
-Join worker nodes to the cluster automatically
+## 1- Install ansible ##
 
-This approach eliminates manual configuration and ensures all nodes are configured in the same way, which is especially useful for cloud environments such as AWS.
-
-## 1-install ansible ##
-
-``` 
-
+```
 $ sudo apt update
 $ sudo apt install software-properties-common
 $ sudo add-apt-repository --yes --update ppa:ansible/ansible
 $ sudo apt install ansible
 ```
-## 2-Generate the private key of machine ##
 
-put this private key  path in ansible.cfg 
+## 2- Private key ##
+
+Put your private key path in `ansible.cfg`:
 ```
 private_key_file = ./key.pem
-# if you use AWS change permission first to 400
-chmod 400 key.pem 
-```
-## 3- Edit hosts file in you machine ##
-edit it with your IPs
-```
-vim /etc/hosts
-127.0.0.1 localhost
-18.205.246.4  master1
-54.167.62.72  worker1
-54.152.204.6 worker2
-3.88.104.5  worker3
-```
-## 4- To verify you working right ##
-
-```
-ubuntu@ip-172-31-31-231:~/K8S-ansible-installation$ ansible-inventory --graph
-@all:
-  |--@ungrouped:
-  |--@master:
-  |  |--master1
-  |--@workers:
-  |  |--worker1
-  |  |--worker2
-  |  |--worker3
+chmod 400 key.pem
 ```
 
-And this to check reachability 
-```
-ubuntu@ip-172-31-31-231:~/K8S-ansible-installation$ ansible all -m ping
-worker3 | SUCCESS => {
-    "changed": false,
-    "ping": "pong"
-}
-worker1 | SUCCESS => {
-    "changed": false,
-    "ping": "pong"
-}
-worker2 | SUCCESS => {
-    "changed": false,
-    "ping": "pong"
-}
-master1 | SUCCESS => {
-    "changed": false,
-    "ping": "pong"
-}
-ubuntu@ip-172-31-31-231:~/K8S-ansible-installation$ a
+## 3- Edit inventory.ini with your IPs ##
+
+```ini
+[masters]
+master1 ansible_host=192.168.1.11
+master2 ansible_host=192.168.1.12
+master3 ansible_host=192.168.1.13
+
+[workers]
+worker1 ansible_host=192.168.1.21
+worker2 ansible_host=192.168.1.22
+worker3 ansible_host=192.168.1.23
+
+[loadbalancer]
+lb1 ansible_host=192.168.1.10
 ```
 
-## 5- To run a playbook ##
+## 4- Verify inventory and reachability ##
+
+```
+ansible-inventory --graph
+ansible all -m ping
+```
+
+## 5- Run the playbook ##
+
 ```
 ansible-playbook playbook.yml
+```
+
+## 6- Verify the cluster ##
+
+On any master:
 
 ```
+kubectl get nodes -o wide
+```
+
+Check the etcd cluster (systemd service):
+
+```
+systemctl status etcd
+
+sudo etcdctl endpoint status --cluster -w table \
+  --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/etcd/pki/ca.crt \
+  --cert=/etc/etcd/pki/server.crt \
+  --key=/etc/etcd/pki/server.key
+```
+
+## Notes ##
+
+- Shared settings (pod CIDR, etcd version/ports, load balancer endpoint) live in `group_vars/all.yml`.
+- The API server endpoint used by all kubeconfigs is the haproxy node (`<lb-ip>:6443`), so any single master can fail without losing API access.
+- etcd data lives in `/var/lib/etcd`, TLS material in `/etc/etcd/pki`. kubeadm's external-etcd certs are placed at `/etc/kubernetes/pki/etcd/ca.crt` and `/etc/kubernetes/pki/apiserver-etcd-client.{crt,key}` on every master.

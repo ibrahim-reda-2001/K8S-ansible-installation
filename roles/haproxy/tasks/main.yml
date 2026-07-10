@@ -1,0 +1,19 @@
+---
+- name: Install haproxy
+  apt:
+    name: haproxy
+    state: present
+    update_cache: yes
+
+- name: Deploy haproxy configuration for kube-apiserver
+  template:
+    src: haproxy.cfg.j2
+    dest: /etc/haproxy/haproxy.cfg
+    mode: '0644'
+  notify: Restart haproxy
+
+- name: Enable and start haproxy
+  service:
+    name: haproxy
+    state: started
+    enabled: yes

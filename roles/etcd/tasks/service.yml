@@ -1,0 +1,31 @@
+---
+- name: Deploy etcd systemd unit
+  template:
+    src: etcd.service.j2
+    dest: /etc/systemd/system/etcd.service
+    mode: '0644'
+  notify: Restart etcd
+
+- name: Enable and start etcd on all nodes simultaneously
+  systemd:
+    name: etcd
+    state: started
+    enabled: yes
+    daemon_reload: yes
+
+# etcd needs a quorum, so flush pending restarts on all nodes before health check
+- name: Flush handlers so etcd (re)starts cluster-wide
+  meta: flush_handlers
+
+- name: Wait for etcd cluster to become healthy
+  command: >
+    {{ etcd_install_dir }}/etcdctl endpoint health
+    --endpoints=https://127.0.0.1:{{ etcd_client_port }}
+    --cacert={{ etcd_pki_dir }}/ca.crt
+    --cert={{ etcd_pki_dir }}/server.crt
+    --key={{ etcd_pki_dir }}/server.key
+  register: etcd_health
+  retries: 12
+  delay: 10
+  until: etcd_health.rc == 0
+  changed_when: false

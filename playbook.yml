@@ -1,23 +1,47 @@
-- name: this is for master kubernetes
-  hosts: master
-  vars:
-    node_hostname: "master"
-    kube_join_role: master
-
-  roles:
-    - k8s-node-setup
-    - kubeadm
-    - cni
-    - join
-
-- name: this is for workers kubernetes
-  hosts: workers
-  gather_facts: true
+---
+- name: Prepare all Kubernetes nodes (runtime, kubeadm, kubelet)
+  hosts: k8s_nodes
   become: true
   vars:
-    node_hostname: "worker{{ ansible_play_hosts.index(inventory_hostname) + 1 }}"
-    kube_join_role: worker
+    node_hostname: "{{ inventory_hostname }}"
   roles:
     - k8s-node-setup
+
+- name: Configure haproxy load balancer for kube-apiserver
+  hosts: loadbalancer
+  become: true
+  roles:
+    - haproxy
+
+- name: Deploy etcd cluster as systemd service on masters
+  hosts: masters
+  become: true
+  roles:
+    - etcd
+
+- name: Initialize first control plane
+  hosts: masters[0]
+  become: true
+  vars:
+    kube_join_role: master
+  roles:
+    - kubeadm
+    - join
+    - cni
+
+- name: Join remaining control planes
+  hosts: masters[1:]
+  become: true
+  serial: 1
+  vars:
+    kube_join_role: control-plane
+  roles:
     - join
 
+- name: Join worker nodes
+  hosts: workers
+  become: true
+  vars:
+    kube_join_role: worker
+  roles:
+    - join

@@ -1,2 +1,4 @@
 ---
 # defaults file for role/join
+kube_config_user: "{{ ansible_user | default('ubuntu') }}"
+kube_user_home: "/home/{{ kube_config_user }}"

@@ -9,13 +9,12 @@
       - ipset
     state: present
 
-
 - name: Check if node is already joined
   stat:
     path: /etc/kubernetes/kubelet.conf
   register: kubelet_conf
 
-- name: Resolve master hostname
+- name: Resolve first master hostname
   set_fact:
     target_master: "{{ (kube_master_host is defined) | ternary(kube_master_host, groups[kube_master_group][0]) }}"
 

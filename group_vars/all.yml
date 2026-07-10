@@ -1,0 +1,18 @@
+---
+# Shared cluster configuration
+pod_network_cidr: "192.168.0.0/16"
+
+# etcd runs as a systemd service on every host in [masters]
+etcd_version: "v3.5.15"
+etcd_data_dir: /var/lib/etcd
+etcd_pki_dir: /etc/etcd/pki
+etcd_client_port: 2379
+etcd_peer_port: 2380
+
+# IP each node advertises to the cluster (etcd peers, apiserver, haproxy backends)
+k8s_node_ip: "{{ ansible_default_ipv4.address }}"
+
+# Stable API server endpoint = the haproxy node
+apiserver_lb_host: "{{ hostvars[groups['loadbalancer'][0]].ansible_host | default(groups['loadbalancer'][0]) }}"
+apiserver_lb_port: 6443
+control_plane_endpoint: "{{ apiserver_lb_host }}:{{ apiserver_lb_port }}"

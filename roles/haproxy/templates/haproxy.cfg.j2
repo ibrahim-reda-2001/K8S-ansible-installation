@@ -1,0 +1,25 @@
+global
+    log /dev/log local0
+    log /dev/log local1 notice
+    daemon
+
+defaults
+    mode tcp
+    log global
+    option tcplog
+    option dontlognull
+    retries 3
+    timeout connect 10s
+    timeout client 1h
+    timeout server 1h
+
+frontend kube_apiserver
+    bind *:{{ apiserver_lb_port }}
+    default_backend kube_apiserver_backend
+
+backend kube_apiserver_backend
+    balance roundrobin
+    option tcp-check
+{% for host in groups['masters'] %}
+    server {{ host }} {{ hostvars[host]['k8s_node_ip'] }}:6443 check fall 3 rise 2
+{% endfor %}

@@ -1,0 +1,22 @@
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: InitConfiguration
+localAPIEndpoint:
+  advertiseAddress: {{ k8s_node_ip }}
+  bindPort: 6443
+nodeRegistration:
+  name: {{ inventory_hostname }}
+---
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: ClusterConfiguration
+controlPlaneEndpoint: "{{ control_plane_endpoint }}"
+networking:
+  podSubnet: "{{ pod_network_cidr }}"
+etcd:
+  external:
+    endpoints:
+{% for host in groups['masters'] %}
+      - https://{{ hostvars[host]['k8s_node_ip'] }}:{{ etcd_client_port }}
+{% endfor %}
+    caFile: /etc/kubernetes/pki/etcd/ca.crt
+    certFile: /etc/kubernetes/pki/apiserver-etcd-client.crt
+    keyFile: /etc/kubernetes/pki/apiserver-etcd-client.key

@@ -1,0 +1,34 @@
+[Unit]
+Description=etcd key-value store
+Documentation=https://etcd.io/docs
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=etcd
+Group=etcd
+ExecStart={{ etcd_install_dir }}/etcd \
+  --name={{ inventory_hostname }} \
+  --data-dir={{ etcd_data_dir }} \
+  --listen-client-urls=https://{{ k8s_node_ip }}:{{ etcd_client_port }},https://127.0.0.1:{{ etcd_client_port }} \
+  --advertise-client-urls=https://{{ k8s_node_ip }}:{{ etcd_client_port }} \
+  --listen-peer-urls=https://{{ k8s_node_ip }}:{{ etcd_peer_port }} \
+  --initial-advertise-peer-urls=https://{{ k8s_node_ip }}:{{ etcd_peer_port }} \
+  --initial-cluster={% for host in groups['masters'] %}{{ host }}=https://{{ hostvars[host]['k8s_node_ip'] }}:{{ etcd_peer_port }}{% if not loop.last %},{% endif %}{% endfor %} \
+  --initial-cluster-token=etcd-cluster-0 \
+  --initial-cluster-state=new \
+  --client-cert-auth=true \
+  --trusted-ca-file={{ etcd_pki_dir }}/ca.crt \
+  --cert-file={{ etcd_pki_dir }}/server.crt \
+  --key-file={{ etcd_pki_dir }}/server.key \
+  --peer-client-cert-auth=true \
+  --peer-trusted-ca-file={{ etcd_pki_dir }}/ca.crt \
+  --peer-cert-file={{ etcd_pki_dir }}/server.crt \
+  --peer-key-file={{ etcd_pki_dir }}/server.key
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

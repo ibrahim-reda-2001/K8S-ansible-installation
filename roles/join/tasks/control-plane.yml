@@ -9,37 +9,37 @@
       - ipset
     state: present
 
-- name: Check if Kubernetes is already initialized
+- name: Check if node is already joined
   stat:
-    path: /etc/kubernetes/admin.conf
-  register: kube_admin_conf
+    path: /etc/kubernetes/kubelet.conf
+  register: kubelet_conf
 
-- name: Render kubeadm init configuration
-  become: yes
-  template:
-    src: kubeadm-config.yaml.j2
-    dest: /etc/kubernetes/kubeadm-config.yaml
-    mode: '0600'
+- name: Resolve first master hostname
+  set_fact:
+    target_master: "{{ groups[kube_master_group][0] }}"
 
-- name: Initialize first control plane with kubeadm (if not initialized)
+- name: Join node as additional control plane
   become: yes
   command: >
-    timeout 1200 kubeadm init
-    --config /etc/kubernetes/kubeadm-config.yaml
-    --upload-certs
-  when: not kube_admin_conf.stat.exists
-  register: kubeadm_init_result
+    timeout 1200 {{ hostvars[target_master]['kubeadm_join_command'] }}
+    --control-plane
+    --certificate-key {{ hostvars[target_master]['kubeadm_certificate_key'] }}
+    --apiserver-advertise-address {{ k8s_node_ip }}
+  when: not kubelet_conf.stat.exists
+  args:
+    creates: /etc/kubernetes/kubelet.conf
 
 - name: Ensure .kube directory exists for {{ kube_config_user }}
+  become: yes
   file:
     path: "{{ kube_user_home }}/.kube"
     state: directory
     owner: "{{ kube_config_user }}"
     group: "{{ kube_config_user }}"
     mode: '0750'
-  become: yes
 
 - name: Copy admin.conf to user's kubeconfig
+  become: yes
   copy:
     src: /etc/kubernetes/admin.conf
     dest: "{{ kube_user_home }}/.kube/config"
@@ -47,4 +47,3 @@
     group: "{{ kube_config_user }}"
     mode: '0600'
     remote_src: yes
-  become: yes
