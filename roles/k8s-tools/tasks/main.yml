@@ -1,0 +1,96 @@
+---
+# ---------- Helm ----------
+- name: Check installed helm version
+  command: "{{ tools_install_dir }}/helm version --short"
+  register: helm_installed
+  failed_when: false
+  changed_when: false
+
+- name: Decide whether helm needs install or upgrade
+  set_fact:
+    helm_needs_install: "{{ helm_installed.rc != 0 or helm_version not in helm_installed.stdout }}"
+
+- name: Download helm release tarball
+  get_url:
+    url: "https://get.helm.sh/helm-{{ helm_version }}-linux-amd64.tar.gz"
+    dest: /tmp/helm-{{ helm_version }}.tar.gz
+    mode: '0644'
+  when: helm_needs_install
+
+- name: Extract helm tarball
+  unarchive:
+    src: /tmp/helm-{{ helm_version }}.tar.gz
+    dest: /tmp
+    remote_src: yes
+  when: helm_needs_install
+
+- name: Install helm binary
+  copy:
+    src: /tmp/linux-amd64/helm
+    dest: "{{ tools_install_dir }}/helm"
+    mode: '0755'
+    remote_src: yes
+  when: helm_needs_install
+
+# ---------- k9s ----------
+- name: Check installed k9s version
+  command: "{{ tools_install_dir }}/k9s version --short"
+  register: k9s_installed
+  failed_when: false
+  changed_when: false
+
+- name: Decide whether k9s needs install or upgrade
+  set_fact:
+    k9s_needs_install: "{{ k9s_installed.rc != 0 or (k9s_version | regex_replace('^v', '')) not in k9s_installed.stdout }}"
+
+- name: Download k9s release tarball
+  get_url:
+    url: "https://github.com/derailed/k9s/releases/download/{{ k9s_version }}/k9s_Linux_amd64.tar.gz"
+    dest: /tmp/k9s-{{ k9s_version }}.tar.gz
+    mode: '0644'
+  when: k9s_needs_install
+
+- name: Create k9s extraction directory
+  file:
+    path: /tmp/k9s-{{ k9s_version }}
+    state: directory
+  when: k9s_needs_install
+
+- name: Extract k9s tarball
+  unarchive:
+    src: /tmp/k9s-{{ k9s_version }}.tar.gz
+    dest: /tmp/k9s-{{ k9s_version }}
+    remote_src: yes
+  when: k9s_needs_install
+
+- name: Install k9s binary
+  copy:
+    src: /tmp/k9s-{{ k9s_version }}/k9s
+    dest: "{{ tools_install_dir }}/k9s"
+    mode: '0755'
+    remote_src: yes
+  when: k9s_needs_install
+
+# ---------- Bash completion for all users ----------
+- name: Enable helm bash completion for all users
+  shell: "{{ tools_install_dir }}/helm completion bash > /etc/bash_completion.d/helm"
+  args:
+    creates: /etc/bash_completion.d/helm
+
+- name: Enable k9s bash completion for all users
+  shell: "{{ tools_install_dir }}/k9s completion bash > /etc/bash_completion.d/k9s"
+  args:
+    creates: /etc/bash_completion.d/k9s
+
+# ---------- Validation ----------
+- name: Validate - helm runs and matches the requested version
+  command: "{{ tools_install_dir }}/helm version --short"
+  register: helm_check
+  changed_when: false
+  failed_when: helm_version not in helm_check.stdout
+
+- name: Validate - k9s runs and matches the requested version
+  command: "{{ tools_install_dir }}/k9s version --short"
+  register: k9s_check
+  changed_when: false
+  failed_when: (k9s_version | regex_replace('^v', '')) not in k9s_check.stdout

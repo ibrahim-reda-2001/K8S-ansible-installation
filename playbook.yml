@@ -55,3 +55,9 @@
   become: true
   roles:
     - kubectl-client
+
+- name: Install cluster tools (helm, k9s) on masters and load balancer
+  hosts: masters:loadbalancer
+  become: true
+  roles:
+    - k8s-tools

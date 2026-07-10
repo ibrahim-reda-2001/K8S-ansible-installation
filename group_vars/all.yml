@@ -4,6 +4,9 @@
 k8s_version: "1.31"
 # Calico CNI release tag
 calico_version: "v3.30.2"
+# Cluster tools (installed on masters and the load balancer)
+helm_version: "v3.16.4"
+k9s_version: "v0.32.7"
 pod_network_cidr: "192.168.0.0/16"
 
 # etcd runs as a systemd service on every host in [masters]

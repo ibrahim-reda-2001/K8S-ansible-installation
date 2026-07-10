@@ -1,0 +1,4 @@
+---
+helm_version: "v3.16.4"
+k9s_version: "v0.32.7"
+tools_install_dir: /usr/local/bin
