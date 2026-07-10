@@ -25,3 +25,14 @@
   when: not kubelet_conf.stat.exists
   args:
     creates: /etc/kubernetes/kubelet.conf
+
+# ---------- Validation ----------
+- name: Validate - kubelet is active on this worker
+  command: systemctl is-active kubelet
+  changed_when: false
+
+- name: Validate - this worker reports Ready (checked from master)
+  become: yes
+  command: kubectl --kubeconfig /etc/kubernetes/admin.conf wait node/{{ node_hostname }} --for=condition=Ready --timeout=300s
+  delegate_to: "{{ target_master }}"
+  changed_when: false

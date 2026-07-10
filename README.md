@@ -1,54 +1,75 @@
-### Overview ###
+# Kubernetes Cluster Installation with Ansible (single master)
 
-This guide explains how to install and configure a Kubernetes cluster using Ansible.
+This project installs and configures a Kubernetes cluster — **one master node and multiple worker nodes** — using Ansible, in a consistent, repeatable, and idempotent way.
 
-Ansible is used as an automation tool to provision and configure multiple servers (one master node and multiple worker nodes) in a consistent, repeatable, and idempotent way.
+What the playbook does:
 
-Using this setup, Ansible will:
+1. Prepares the OS on every node — containerd runtime, CNI plugins, swap off, kernel modules, sysctl
+2. Installs `kubelet`, `kubeadm`, `kubectl` (version-pinned, packages held) with bash completion for all users
+3. Initializes the control plane with `kubeadm init` on the master
+4. Deploys the Calico CNI
+5. Joins the worker nodes automatically
+6. Validates each stage — API server `/readyz`, Calico rollout, CoreDNS available, every node `Ready`
 
-Connect to all Kubernetes nodes using SSH
+## Choosing versions
 
-Prepare the operating system on each node
+All versions live in [`group_vars/all.yml`](group_vars/all.yml) — edit them there, nothing is hardcoded in the roles:
 
-Install container runtime and Kubernetes components
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `k8s_version` | `"1.31"` | Kubernetes **minor** version — selects the pkgs.k8s.io apt repo for kubelet/kubeadm/kubectl (latest patch of that minor is installed) |
+| `calico_version` | `"v3.30.2"` | Calico release tag (keep the `v` prefix) |
+| `cni_plugins_version` | `"v1.4.0"` | containernetworking plugins release tag |
+| `pod_network_cidr` | `"192.168.0.0/16"` | Pod network passed to `kubeadm init` (Calico's default) |
 
-Initialize the Kubernetes control plane
+The playbook also **verifies** the installed kubeadm and the running control plane actually match `k8s_version`, and fails loudly if they don't.
 
-Join worker nodes to the cluster automatically
+## Requirements
 
-This approach eliminates manual configuration and ensures all nodes are configured in the same way, which is especially useful for cloud environments such as AWS.
+- Ubuntu hosts reachable over SSH as the user set in `ansible.cfg` (default `ubuntu`)
+- An Ansible control node (can be any machine with SSH access to all nodes)
 
-## 1-install ansible ##
+## 1 - Install Ansible on the control node
 
-``` 
-
-$ sudo apt update
-$ sudo apt install software-properties-common
-$ sudo add-apt-repository --yes --update ppa:ansible/ansible
-$ sudo apt install ansible
+```bash
+sudo apt update
+sudo apt install software-properties-common
+sudo add-apt-repository --yes --update ppa:ansible/ansible
+sudo apt install ansible
 ```
-## 2-Generate the private key of machine ##
 
-put this private key  path in ansible.cfg 
-```
+## 2 - SSH private key
+
+Put your private key path in `ansible.cfg`:
+
+```ini
 private_key_file = ./key.pem
-# if you use AWS change permission first to 400
-chmod 400 key.pem 
 ```
-## 3- Edit hosts file in you machine ##
-edit it with your IPs
+
+```bash
+# on AWS, restrict permissions first
+chmod 400 key.pem
 ```
-vim /etc/hosts
-127.0.0.1 localhost
+
+## 3 - Map hostnames to IPs
+
+Edit `/etc/hosts` on the control node with your nodes' IPs, matching the names in `inventory.ini`:
+
+```text
+127.0.0.1     localhost
 18.205.246.4  master1
 54.167.62.72  worker1
-54.152.204.6 worker2
-3.88.104.5  worker3
+54.152.204.6  worker2
+3.88.104.5    worker3
 ```
-## 4- To verify you working right ##
 
+## 4 - Verify inventory and reachability
+
+```bash
+ansible-inventory --graph
 ```
-ubuntu@ip-172-31-31-231:~/K8S-ansible-installation$ ansible-inventory --graph
+
+```text
 @all:
   |--@ungrouped:
   |--@master:
@@ -59,30 +80,44 @@ ubuntu@ip-172-31-31-231:~/K8S-ansible-installation$ ansible-inventory --graph
   |  |--worker3
 ```
 
-And this to check reachability 
-```
-ubuntu@ip-172-31-31-231:~/K8S-ansible-installation$ ansible all -m ping
-worker3 | SUCCESS => {
-    "changed": false,
-    "ping": "pong"
-}
-worker1 | SUCCESS => {
-    "changed": false,
-    "ping": "pong"
-}
-worker2 | SUCCESS => {
-    "changed": false,
-    "ping": "pong"
-}
-master1 | SUCCESS => {
-    "changed": false,
-    "ping": "pong"
-}
-ubuntu@ip-172-31-31-231:~/K8S-ansible-installation$ a
+```bash
+ansible all -m ping
 ```
 
-## 5- To run a playbook ##
-```
+Every host should answer `SUCCESS => "ping": "pong"`.
+
+## 5 - Run the playbook
+
+```bash
 ansible-playbook playbook.yml
-
 ```
+
+The playbook is **idempotent**: running it a second time on a healthy cluster should finish with `changed=0` on every host. That also makes it safe to re-run after a failure — completed steps are skipped, only the missing ones execute.
+
+## 6 - Verify the cluster
+
+On the master:
+
+```bash
+kubectl get nodes -o wide
+kubectl get pods -A
+```
+
+All nodes should be `Ready` and all `kube-system` pods `Running`. Tab completion for `kubectl` works for every user out of the box (new login shell required after first install).
+
+## Project layout
+
+```text
+playbook.yml            # two plays: master (setup, init, CNI, join-token), workers (setup, join)
+group_vars/all.yml      # versions and pod CIDR - the only file you normally edit
+roles/
+  k8s-node-setup/       # OS prep, containerd, kubelet/kubeadm/kubectl, bash completion
+  kubeadm/              # kubeadm init + kubeconfig for the SSH user + API validation
+  cni/                  # Calico download/apply + rollout validation
+  join/                 # join-token generation on master, worker join + Ready validation
+```
+
+## Notes
+
+- Kubernetes packages are apt-held after install; changing `k8s_version` affects fresh nodes only — upgrading a live cluster is a separate `kubeadm upgrade` procedure.
+- For a **highly available** setup (3 masters, external etcd as a systemd service, haproxy load balancer), see the `master` branch of this repository.

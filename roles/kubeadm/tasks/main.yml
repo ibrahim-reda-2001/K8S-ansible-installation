@@ -13,38 +13,45 @@
   stat:
     path: /etc/kubernetes/admin.conf
   register: kube_admin_conf
-- name: show the stat
-  debug:
-    var: kube_admin_conf
-
-- name: Check if Kubernetes is already initialized
-  stat:
-    path: /etc/kubernetes/admin.conf
-  register: kube_admin_conf
 
 - name: Initialize control plane with kubeadm (if not initialized)
   become: yes
   shell: >
-    timeout 1200  sudo kubeadm init --pod-network-cidr={{ kubeadm_init_pod_network_cidr }}
+    timeout 1200 kubeadm init --pod-network-cidr={{ pod_network_cidr }}
     {% if kubeadm_init_upload_certs %}--upload-certs{% endif %}
   when: not kube_admin_conf.stat.exists
   register: kubeadm_init_result
 
-- name: Ensure .kube directory exists for ubuntu user
+- name: Ensure .kube directory exists for {{ kube_config_user }}
   file:
-    path: /home/ubuntu/.kube
+    path: "{{ kube_user_home }}/.kube"
     state: directory
-    owner: ubuntu
-    group: ubuntu
+    owner: "{{ kube_config_user }}"
+    group: "{{ kube_config_user }}"
     mode: '0750'
   become: yes
 
-- name: Copy admin.conf to ubuntu user's kubeconfig
+- name: Copy admin.conf to user's kubeconfig
   copy:
     src: /etc/kubernetes/admin.conf
-    dest: /home/ubuntu/.kube/config
-    owner: ubuntu
-    group: ubuntu
+    dest: "{{ kube_user_home }}/.kube/config"
+    owner: "{{ kube_config_user }}"
+    group: "{{ kube_config_user }}"
     mode: '0600'
     remote_src: yes
   become: yes
+
+# ---------- Validation ----------
+- name: Validate - API server answers /readyz
+  command: kubectl --kubeconfig /etc/kubernetes/admin.conf get --raw /readyz
+  register: api_ready
+  retries: 30
+  delay: 10
+  until: api_ready.rc == 0 and api_ready.stdout == 'ok'
+  changed_when: false
+
+- name: Validate - control plane runs the requested Kubernetes version
+  command: kubectl --kubeconfig /etc/kubernetes/admin.conf get node {{ node_hostname }} -o jsonpath={.status.nodeInfo.kubeletVersion}
+  register: node_version
+  changed_when: false
+  failed_when: not node_version.stdout.startswith('v' + k8s_version)

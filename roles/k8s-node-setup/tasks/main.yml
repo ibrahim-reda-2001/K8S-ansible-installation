@@ -1,7 +1,8 @@
 ---
-- name: Update apt cache
+- name: Update apt cache (if older than 1h)
   apt:
     update_cache: yes
+    cache_valid_time: 3600
 
 - name: Install prerequisites
   apt:
@@ -13,7 +14,7 @@
       - gnupg
       - python3-urllib3
       - python3-requests
-    update_cache: yes
+      - bash-completion
     state: present
 
 - name: Create keyrings directory
@@ -26,8 +27,10 @@
 - name: Download Docker GPG key (ASCII, no dearmor)
   become: yes
   shell: |
-    sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-    sudo chmod a+r /etc/apt/keyrings/docker.asc
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+    chmod a+r /etc/apt/keyrings/docker.asc
+  args:
+    creates: /etc/apt/keyrings/docker.asc
 
 - name: Add Docker repository using .sources file
   become: yes
@@ -39,11 +42,7 @@
       Suites: jammy
       Components: stable
       Signed-By: /etc/apt/keyrings/docker.asc
-
-- name: Update apt cache
-  become: yes
-  apt:
-    update_cache: yes
+  register: docker_repo
 
 - name: Install Docker components
   become: yes
@@ -53,10 +52,7 @@
       - docker-ce
       - docker-ce-cli
     state: present
-
-- name: Reload systemd
-  systemd:
-    daemon_reload: yes
+    update_cache: "{{ docker_repo.changed }}"
 
 - name: Enable and start Docker services
   service:
@@ -73,23 +69,30 @@
     groups: docker
     append: yes
 
-- name: Download CNI plugins
-  become: yes
-  shell: |
-    curl -L https://github.com/containernetworking/plugins/releases/download/v1.4.0/cni-plugins-linux-amd64-v1.4.0.tgz \
-    -o /tmp/cni-plugins.tgz
-
 - name: Create CNI bin directory
   file:
     path: /opt/cni/bin
     state: directory
+
+- name: Check if CNI plugins are already extracted
+  stat:
+    path: /opt/cni/bin/bridge
+  register: cni_bridge
+
+- name: Download CNI plugins
+  become: yes
+  get_url:
+    url: "https://github.com/containernetworking/plugins/releases/download/{{ cni_plugins_version }}/cni-plugins-linux-amd64-{{ cni_plugins_version }}.tgz"
+    dest: /tmp/cni-plugins.tgz
+    mode: '0644'
+  when: not cni_bridge.stat.exists
 
 - name: Extract CNI plugins
   unarchive:
     src: /tmp/cni-plugins.tgz
     dest: /opt/cni/bin
     remote_src: yes
-
+  when: not cni_bridge.stat.exists
 
 - name: Ensure containerd configuration directory exists
   file:
@@ -98,38 +101,43 @@
 
 - name: Generate containerd default config if not exists
   become: yes
-  shell: |
-      mkdir -p /etc/containerd
-      containerd config default > /etc/containerd/config.toml
-    
+  shell: containerd config default > /etc/containerd/config.toml
+  args:
+    creates: /etc/containerd/config.toml
 
 - name: Set SystemdCgroup = true in containerd config
-  shell: |
-    sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
-    systemctl daemon-reload
-    systemctl restart containerd
   become: yes
+  replace:
+    path: /etc/containerd/config.toml
+    regexp: 'SystemdCgroup = false'
+    replace: 'SystemdCgroup = true'
   notify: Restart containerd
+
 - name: Ensure containerd is running
   service:
     name: containerd
     state: started
     enabled: yes
+
 - name: Disable swap in fstab
   replace:
     path: /etc/fstab
     regexp: '^(.*swap.*)$'
     replace: '# \1'
 
+- name: Check if swap is active
+  command: swapon --show
+  register: swap_status
+  changed_when: false
+
 - name: Disable active swap
   command: swapoff -a
+  when: swap_status.stdout | length > 0
 
 - name: Install SELinux utilities
   apt:
     name: selinux-utils
     state: present
-
-
 
 - name: Enable IP forwarding
   ansible.posix.sysctl:
@@ -152,25 +160,21 @@
   ansible.builtin.stat:
     path: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
   register: k8s_key
-  
 
 - name: Download Kubernetes GPG key
   become: yes
   shell: |
-    curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+    curl -fsSL https://pkgs.k8s.io/core:/stable:/v{{ k8s_version }}/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
   when: not k8s_key.stat.exists
 
 - name: Add Kubernetes repository
   become: yes
-  shell: |
-      echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
-  
+  copy:
+    dest: /etc/apt/sources.list.d/kubernetes.list
+    content: |
+      deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v{{ k8s_version }}/deb/ /
+  register: k8s_repo
 
-- name: Update apt cache
-  become: yes
-  apt:
-    update_cache: yes
-    
 - name: Install Kubernetes components
   apt:
     name:
@@ -178,9 +182,21 @@
       - kubeadm
       - kubectl
     state: present
+    update_cache: "{{ k8s_repo.changed }}"
 
 - name: Hold Kubernetes packages
-  command: apt-mark hold kubelet kubeadm kubectl
+  dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop:
+    - kubelet
+    - kubeadm
+    - kubectl
+
+- name: Enable kubectl bash completion for all users
+  shell: kubectl completion bash > /etc/bash_completion.d/kubectl
+  args:
+    creates: /etc/bash_completion.d/kubectl
 
 - name: Load kernel modules
   modprobe:
@@ -197,6 +213,7 @@
       net.bridge.bridge-nf-call-ip6tables = 1
       net.bridge.bridge-nf-call-iptables = 1
       net.ipv4.ip_forward = 1
+  notify: Apply sysctl settings
 
 - name: Configure kernel modules
   copy:
@@ -205,10 +222,36 @@
       overlay
       br_netfilter
 
-- name: Apply sysctl settings
-  command: sysctl --system
-
 - name: Enable kubelet service
   service:
     name: kubelet
     enabled: yes
+
+- name: Flush handlers before validation
+  meta: flush_handlers
+
+# ---------- Validation ----------
+- name: Validate - containerd is active
+  command: systemctl is-active containerd
+  changed_when: false
+
+- name: Validate - installed kubeadm version matches k8s_version
+  command: kubeadm version -o short
+  register: kubeadm_version_check
+  changed_when: false
+  failed_when: not kubeadm_version_check.stdout.startswith('v' + k8s_version)
+
+- name: Validate - swap is disabled
+  command: swapon --show
+  register: swap_check
+  changed_when: false
+  failed_when: swap_check.stdout | length > 0
+
+- name: Validate - required kernel modules are loaded
+  stat:
+    path: "/sys/module/{{ item }}"
+  register: kmod_check
+  failed_when: not kmod_check.stat.exists
+  loop:
+    - overlay
+    - br_netfilter

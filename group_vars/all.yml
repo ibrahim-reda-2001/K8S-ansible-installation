@@ -1,0 +1,10 @@
+---
+# Cluster-wide configuration - edit versions here
+# Kubernetes minor version - controls the apt repo (pkgs.k8s.io) that kubelet/kubeadm/kubectl are installed from
+k8s_version: "1.31"
+# Calico CNI release tag
+calico_version: "v3.30.2"
+# containernetworking plugins release tag
+cni_plugins_version: "v1.4.0"
+
+pod_network_cidr: "192.168.0.0/16"
