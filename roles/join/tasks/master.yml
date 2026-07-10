@@ -4,8 +4,10 @@
   register: join_command
   changed_when: false
 
+# --config is required: without it upload-certs assumes stacked etcd and the
+# kubeadm-certs secret would be missing the external etcd CA/client certs
 - name: Upload control-plane certificates and get certificate key
-  command: kubeadm init phase upload-certs --upload-certs
+  command: kubeadm init phase upload-certs --upload-certs --config /etc/kubernetes/kubeadm-config.yaml
   register: upload_certs
   changed_when: false
 
