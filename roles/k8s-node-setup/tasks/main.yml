@@ -99,11 +99,19 @@
     path: /etc/containerd
     state: directory
 
-- name: Generate containerd default config if not exists
+# The containerd.io package ships a config with the CRI plugin disabled,
+# so regenerate whenever the CRI plugin section is missing (not just when the file is absent)
+- name: Check if containerd config has the CRI plugin enabled
+  command: grep -q 'io.containerd.grpc.v1.cri' /etc/containerd/config.toml
+  register: containerd_cri
+  failed_when: false
+  changed_when: false
+
+- name: Generate containerd default config (enables CRI)
   become: yes
   shell: containerd config default > /etc/containerd/config.toml
-  args:
-    creates: /etc/containerd/config.toml
+  when: containerd_cri.rc != 0
+  notify: Restart containerd
 
 - name: Set SystemdCgroup = true in containerd config
   become: yes
@@ -233,6 +241,10 @@
 # ---------- Validation ----------
 - name: Validate - containerd is active
   command: systemctl is-active containerd
+  changed_when: false
+
+- name: Validate - containerd CRI plugin is enabled
+  command: grep -q 'io.containerd.grpc.v1.cri' /etc/containerd/config.toml
   changed_when: false
 
 - name: Validate - kubeadm, kubelet and kubectl are installed
